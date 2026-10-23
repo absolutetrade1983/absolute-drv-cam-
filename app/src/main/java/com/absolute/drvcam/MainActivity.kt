@@ -1,17 +1,19 @@
 package com.absolute.drvcam
 
+import android.app.AlertDialog
 import android.content.ContentValues
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Paint
-import android.graphics.Rect
+import android.graphics.RectF
 import android.media.MediaCodec
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
@@ -24,42 +26,56 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.VideoView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
 
+    private lateinit var root: LinearLayout
     private lateinit var preview: ImageView
+    private lateinit var videoPreview: VideoView
     private lateinit var status: TextView
+    private lateinit var createButton: Button
+    private lateinit var targetButton: Button
+
+    private val executor = Executors.newSingleThreadExecutor()
 
     private var selectedUri: Uri? = null
+    private var selectedTargetPackage: String? = null
     private var rotation = 0f
     private var mirrored = false
     private var looping = false
-    private val executor = Executors.newSingleThreadExecutor()
+    private var isCreating = false
 
-    private val picker =
-        registerForActivityResult(ActivityResultContracts.GetContent()) {
-            uri: Uri? ->
+    private val photoPicker =
+        registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
             if (uri != null) {
                 selectedUri = uri
-                preview.setImageURI(uri)
+                videoPreview.stopPlayback()
+                videoPreview.visibility = View.GONE
                 preview.visibility = View.VISIBLE
-                status.text = "Photo selected. Ready to create video."
+
+                try {
+                    preview.setImageURI(uri)
+                    applyImageTransform()
+                    createVideoAutomatically(uri)
+                } catch (e: Exception) {
+                    status.text = "Could not load photo."
+                    toast("Photo could not be opened.")
+                }
             }
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val root = LinearLayout(this).apply {
+        root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(16, 12, 16, 16)
             gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(16, 12, 16, 12)
             setBackgroundColor(Color.rgb(12, 19, 25))
         }
 
@@ -79,104 +95,188 @@ class MainActivity : ComponentActivity() {
         }
         root.addView(subtitle)
 
+        val previewContainer = FrameLayoutCompat.create(this)
         preview = ImageView(this).apply {
             visibility = View.GONE
             scaleType = ImageView.ScaleType.FIT_CENTER
             setBackgroundColor(Color.rgb(28, 39, 46))
         }
 
-        root.addView(
-            preview,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-            ).apply {
-                setMargins(0, 18, 0, 14)
-            }
-        )
-
-        addButton(root, "SELECT PHOTO") {
-            picker.launch("image/*")
-        }
-
-        addButton(root, "ROTATE") {
-            rotation = (rotation + 90f) % 360f
-            preview.rotation = rotation
-        }
-
-        addButton(root, "MIRROR") {
-            mirrored = !mirrored
-            preview.scaleX = if (mirrored) -1f else 1f
-        }
-
-        addButton(root, "LOOP: OFF") { button ->
-            looping = !looping
-            button.text = if (looping) "LOOP: ON" else "LOOP: OFF"
-        }
-
-        addButton(root, "CREATE 30-SECOND MP4") {
-            val uri = selectedUri
-            if (uri == null) {
-                toast("Please select a photo first.")
-            } else {
-                createButtonEnabled(root, false)
-                status.text = "Creating video. Please wait..."
-                executor.execute {
-                    try {
-                        val bitmap = contentResolver.openInputStream(uri)
-                            ?.use { BitmapFactory.decodeStream(it) }
-                            ?: error("Could not read the selected photo.")
-
-                        val output = File(cacheDir, "absolute_${System.currentTimeMillis()}.mp4")
-                        try {
-                            encodePhoto(bitmap, output)
-                        } finally {
-                            bitmap.recycle()
-                        }
-
-                        val savedUri = saveVideo(output)
-                        output.delete()
-
-                        runOnUiThread {
-                            status.text = "Video saved to Movies/ABSOLUTE DRVCAM"
-                            toast("30-second MP4 saved successfully.")
-                            createButtonEnabled(root, true)
-                        }
-                    } catch (e: Exception) {
-                        runOnUiThread {
-                            status.text = "Video creation failed: ${e.message ?: "Unknown error"}"
-                            toast("Could not create video.")
-                            createButtonEnabled(root, true)
-                        }
-                    }
+        videoPreview = VideoView(this).apply {
+            visibility = View.GONE
+            setBackgroundColor(Color.rgb(28, 39, 46))
+            setOnCompletionListener {
+                if (looping) {
+                    seekTo(0)
+                    start()
                 }
             }
         }
 
+        previewContainer.addView(
+            preview,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        previewContainer.addView(
+            videoPreview,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        root.addView(
+            previewContainer,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+            ).apply {
+                setMargins(0, 16, 0, 12)
+            }
+        )
+
+        addButton("SELECT PHOTO") {
+            photoPicker.launch("image/*")
+        }
+
+        addButton("ROTATE") {
+            rotation = (rotation + 90f) % 360f
+            applyImageTransform()
+        }
+
+        addButton("MIRROR") {
+            mirrored = !mirrored
+            applyImageTransform()
+        }
+
+        addButton("LOOP: OFF") { button ->
+            looping = !looping
+            button.text = if (looping) "LOOP: ON" else "LOOP: OFF"
+            if (videoPreview.visibility == View.VISIBLE && looping &&
+                !videoPreview.isPlaying
+            ) {
+                videoPreview.start()
+            }
+        }
+
+        createButton = addButton("CREATE 30-SECOND MP4") {
+            val uri = selectedUri
+            if (uri != null) createVideoAutomatically(uri)
+            else toast("Select a photo first.")
+        }
+
+        targetButton = addButton("SELECT TARGET APP") {
+            showTargetApps()
+        }
+
         status = TextView(this).apply {
-            text = "Choose a photo to begin."
+            text = "Choose a photo. A 30-second video will be created automatically."
             textSize = 13f
             gravity = Gravity.CENTER
             setTextColor(Color.LTGRAY)
-            setPadding(0, 12, 0, 8)
+            setPadding(0, 10, 0, 8)
         }
         root.addView(status)
 
         setContentView(root)
     }
 
-    private fun encodePhoto(bitmap: Bitmap, file: File) {
+    private fun addButton(
+        label: String,
+        action: (Button) -> Unit
+    ): Button {
+        val button = Button(this).apply {
+            text = label
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.rgb(0, 125, 112))
+        }
+        button.setOnClickListener { action(button) }
+        root.addView(
+            button,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                setMargins(0, 3, 0, 3)
+            }
+        )
+        return button
+    }
+
+    private fun applyImageTransform() {
+        preview.rotation = rotation
+        preview.scaleX = if (mirrored) -1f else 1f
+    }
+
+    private fun createVideoAutomatically(uri: Uri) {
+        if (isCreating) {
+            toast("Video is already being created.")
+            return
+        }
+
+        isCreating = true
+        createButton.isEnabled = false
+        status.text = "Creating 30-second MP4 automatically..."
+
+        executor.execute {
+            var bitmap: Bitmap? = null
+            var tempFile: File? = null
+
+            try {
+                bitmap = contentResolver.openInputStream(uri)?.use {
+                    BitmapFactory.decodeStream(it)
+                } ?: error("Unable to read selected photo.")
+
+                tempFile = File(cacheDir, "absolute_${System.currentTimeMillis()}.mp4")
+                encodePhoto(bitmap, tempFile!!, rotation, mirrored)
+
+                val savedUri = saveVideo(tempFile!!)
+                runOnUiThread {
+                    videoPreview.visibility = View.VISIBLE
+                    preview.visibility = View.GONE
+                    videoPreview.setVideoURI(savedUri)
+                    videoPreview.setOnPreparedListener { player ->
+                        player.isLooping = looping
+                        videoPreview.start()
+                    }
+                    status.text = "Saved in Movies/ABSOLUTE DRVCAM"
+                    toast("30-second MP4 created and saved.")
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    status.text = "Video failed: ${e.message ?: "Unknown error"}"
+                    toast("Video could not be created.")
+                }
+            } finally {
+                bitmap?.recycle()
+                tempFile?.delete()
+                runOnUiThread {
+                    isCreating = false
+                    createButton.isEnabled = true
+                }
+            }
+        }
+    }
+
+    private fun encodePhoto(
+        bitmap: Bitmap,
+        output: File,
+        rotationDegrees: Float,
+        mirror: Boolean
+    ) {
         val width = 720
         val height = 1280
         val fps = 15
-        val durationSeconds = 30
-        val frameCount = fps * durationSeconds
+        val frames = fps * 30
 
         val format = MediaFormat.createVideoFormat(
             MediaFormat.MIMETYPE_VIDEO_AVC, width, height
         ).apply {
             setInteger(
                 MediaFormat.KEY_COLOR_FORMAT,
-                MediaCodecInfoCompat.COLOR_FORMAT_SURFACE
+                MediaCodecInfoSurface.COLOR_FORMAT
             )
             setInteger(MediaFormat.KEY_BIT_RATE, 2_000_000)
             setInteger(MediaFormat.KEY_FRAME_RATE, fps)
@@ -184,110 +284,100 @@ class MainActivity : ComponentActivity() {
         }
 
         val encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-        var surface: Surface? = null
+        var inputSurface: Surface? = null
         var muxer: MediaMuxer? = null
         var muxerStarted = false
         var trackIndex = -1
 
         try {
             encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            surface = encoder.createInputSurface()
+            inputSurface = encoder.createInputSurface()
             encoder.start()
-            muxer = MediaMuxer(file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+
+            muxer = MediaMuxer(
+                output.absolutePath,
+                MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4
+            )
 
             val info = MediaCodec.BufferInfo()
             val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-            val src = Rect(0, 0, bitmap.width, bitmap.height)
-            val dst = Rect(0, 0, width, height)
+            val matrix = Matrix()
+            val scale = minOf(
+                width.toFloat() / bitmap.width,
+                height.toFloat() / bitmap.height
+            )
+            matrix.setScale(scale, scale)
+            matrix.postTranslate(
+                (width - bitmap.width * scale) / 2f,
+                (height - bitmap.height * scale) / 2f
+            )
+            matrix.postRotate(rotationDegrees, width / 2f, height / 2f)
+            if (mirror) matrix.postScale(-1f, 1f, width / 2f, height / 2f)
 
-            repeat(frameCount) {
-                val canvas: Canvas = surface.lockCanvas(null)
+            repeat(frames) {
+                val canvas: Canvas = inputSurface.lockCanvas(null)
                 try {
                     canvas.drawColor(Color.BLACK)
-                    canvas.save()
-                    if (mirrored) {
-                        canvas.scale(-1f, 1f, width / 2f, height / 2f)
-                    }
-                    canvas.rotate(rotation, width / 2f, height / 2f)
-                    canvas.drawBitmap(bitmap, src, dst, paint)
-                    canvas.restore()
+                    canvas.drawBitmap(bitmap, matrix, paint)
                 } finally {
-                    surface.unlockCanvasAndPost(canvas)
+                    inputSurface.unlockCanvasAndPost(canvas)
                 }
 
-                drainEncoder(encoder, muxer, info, false) { track ->
-                    trackIndex = track
-                    muxerStarted = true
+                while (true) {
+                    val result = encoder.dequeueOutputBuffer(info, 0)
+                    when {
+                        result == MediaCodec.INFO_TRY_AGAIN_LATER -> break
+                        result == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                            check(!muxerStarted) { "Unexpected encoder format change." }
+                            trackIndex = muxer.addTrack(encoder.outputFormat)
+                            muxer.start()
+                            muxerStarted = true
+                        }
+                        result >= 0 -> {
+                            val buffer = encoder.getOutputBuffer(result)
+                            if (buffer != null && info.size > 0 && muxerStarted) {
+                                buffer.position(info.offset)
+                                buffer.limit(info.offset + info.size)
+                                muxer.writeSampleData(trackIndex, buffer, info)
+                            }
+                            encoder.releaseOutputBuffer(result, false)
+                        }
+                    }
                 }
             }
 
             encoder.signalEndOfInputStream()
-
             var finished = false
             while (!finished) {
-                val result = encoder.dequeueOutputBuffer(info, 10_000)
-                when {
-                    result == MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
-                    result == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                        check(!muxerStarted) { "Encoder format changed twice." }
-                        trackIndex = muxer.addTrack(encoder.outputFormat)
-                        muxer.start()
-                        muxerStarted = true
+                when (val result = encoder.dequeueOutputBuffer(info, 10_000)) {
+                    MediaCodec.INFO_TRY_AGAIN_LATER -> Unit
+                    MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        if (!muxerStarted) {
+                            trackIndex = muxer.addTrack(encoder.outputFormat)
+                            muxer.start()
+                            muxerStarted = true
+                        }
                     }
-                    result >= 0 -> {
+                    else -> if (result >= 0) {
                         val buffer = encoder.getOutputBuffer(result)
                         if (buffer != null && info.size > 0 && muxerStarted) {
                             buffer.position(info.offset)
                             buffer.limit(info.offset + info.size)
                             muxer.writeSampleData(trackIndex, buffer, info)
                         }
-                        finished = (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+                        finished =
+                            (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
                         encoder.releaseOutputBuffer(result, false)
                     }
                 }
             }
-            check(muxerStarted) { "Video encoder did not produce a valid MP4." }
+            check(muxerStarted) { "Encoder produced no video track." }
         } finally {
-            try { surface?.release() } catch (_: Exception) {}
+            try { inputSurface?.release() } catch (_: Exception) {}
             try { encoder.stop() } catch (_: Exception) {}
             encoder.release()
             try { if (muxerStarted) muxer?.stop() } catch (_: Exception) {}
             muxer?.release()
-        }
-    }
-
-    private fun drainEncoder(
-        encoder: MediaCodec,
-        muxer: MediaMuxer,
-        info: MediaCodec.BufferInfo,
-        endOfStream: Boolean,
-        onTrackReady: (Int) -> Unit
-    ) {
-        var track = -1
-        var started = false
-
-        while (true) {
-            val result = encoder.dequeueOutputBuffer(info, 0)
-            when {
-                result == MediaCodec.INFO_TRY_AGAIN_LATER -> return
-                result == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                    track = muxer.addTrack(encoder.outputFormat)
-                    muxer.start()
-                    started = true
-                    onTrackReady(track)
-                }
-                result >= 0 -> {
-                    val buffer = encoder.getOutputBuffer(result)
-                    if (buffer != null && info.size > 0 && started) {
-                        buffer.position(info.offset)
-                        buffer.limit(info.offset + info.size)
-                        muxer.writeSampleData(track, buffer, info)
-                    }
-                    val eos = (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
-                    encoder.releaseOutputBuffer(result, false)
-                    if (eos || endOfStream) return
-                }
-            }
         }
     }
 
@@ -303,12 +393,12 @@ class MainActivity : ComponentActivity() {
 
         val uri = contentResolver.insert(
             MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values
-        ) ?: error("Could not create video file.")
+        ) ?: error("Could not save video.")
 
         try {
-            contentResolver.openOutputStream(uri)?.use { out ->
-                FileInputStream(file).use { input -> input.copyTo(out) }
-            } ?: error("Could not write video file.")
+            contentResolver.openOutputStream(uri)?.use { output ->
+                file.inputStream().use { input -> input.copyTo(output) }
+            } ?: error("Could not write video.")
         } catch (e: Exception) {
             contentResolver.delete(uri, null, null)
             throw e
@@ -317,37 +407,30 @@ class MainActivity : ComponentActivity() {
         return uri
     }
 
-    private fun addButton(
-        parent: LinearLayout,
-        label: String,
-        action: (Button) -> Unit
-    ) {
-        val button = Button(this).apply {
-            text = label
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.rgb(0, 125, 112))
-        }
-        button.setOnClickListener { action(button) }
-        parent.addView(
-            button,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                setMargins(0, 4, 0, 4)
-            }
-        )
-    }
+    private fun showTargetApps() {
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val apps = packageManager.queryIntentActivities(intent, 0)
+            .filter { it.activityInfo.packageName != packageName }
+            .sortedBy { it.loadLabel(packageManager).toString().lowercase() }
 
-    private fun createButtonEnabled(view: View, enabled: Boolean) {
-        if (view is Button && view.text.toString().contains("CREATE 30-SECOND")) {
-            view.isEnabled = enabled
+        if (apps.isEmpty()) {
+            toast("No launchable apps found.")
+            return
         }
-        if (view is ViewGroup) {
-            for (i in 0 until view.childCount) {
-                createButtonEnabled(view.getChildAt(i), enabled)
+
+        val labels = apps.map { it.loadLabel(packageManager).toString() }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("Select Target App")
+            .setItems(labels) { _, index ->
+                val app = apps[index]
+                selectedTargetPackage = app.activityInfo.packageName
+                targetButton.text = "TARGET: ${labels[index]}"
+                status.text =
+                    "Selected target: ${labels[index]}. This does not replace its camera source."
             }
-        }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun toast(message: String) {
@@ -359,7 +442,13 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    private object MediaCodecInfoCompat {
-        const val COLOR_FORMAT_SURFACE = 0x7F000789
+    private object MediaCodecInfoSurface {
+        const val COLOR_FORMAT = 0x7F000789
+    }
+
+    private object FrameLayoutCompat {
+        fun create(context: android.content.Context): android.widget.FrameLayout {
+            return android.widget.FrameLayout(context)
+        }
     }
 }
