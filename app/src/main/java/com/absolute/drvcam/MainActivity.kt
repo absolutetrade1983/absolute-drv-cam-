@@ -1,41 +1,34 @@
-
 package com.absolute.drvcam
 
-import android.app.Activity
-import android.os.Bundle
 import android.graphics.Color
+import android.net.Uri
+import android.os.Bundle
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.content.Intent
-import android.net.Uri
-import android.view.View
 import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 
-class MainActivity : Activity() {
+class MainActivity : ComponentActivity() {
 
     private lateinit var preview: ImageView
-    private var selectedImage: Uri? = null
     private var rotation = 0f
     private var mirrored = false
     private var looping = false
+    private var selectedImage: Uri? = null
 
     private val imagePicker =
-        registerForActivityResult(
-            android.app.ActivityResultContracts.GetContent()
-        ) { uri ->
+        registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
             if (uri != null) {
                 selectedImage = uri
                 preview.setImageURI(uri)
                 preview.visibility = View.VISIBLE
-                Toast.makeText(
-                    this,
-                    "Photo selected",
-                    Toast.LENGTH_SHORT
-                ).show()
+                Toast.makeText(this, "Photo selected", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -68,7 +61,7 @@ class MainActivity : Activity() {
         preview = ImageView(this).apply {
             visibility = View.GONE
             scaleType = ImageView.ScaleType.FIT_CENTER
-            background.setTint(Color.rgb(28, 39, 46))
+            setBackgroundColor(Color.rgb(28, 39, 46))
         }
 
         root.addView(
@@ -104,7 +97,7 @@ class MainActivity : Activity() {
         addButton(root, "SELECT TARGET APP") {
             Toast.makeText(
                 this,
-                "Target-app selection will be added in a later version.",
+                "Target-app selection is not implemented yet.",
                 Toast.LENGTH_LONG
             ).show()
         }
