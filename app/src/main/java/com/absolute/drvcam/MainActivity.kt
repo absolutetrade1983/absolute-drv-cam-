@@ -208,6 +208,12 @@ class MainActivity : ComponentActivity() {
                     .edit().remove("selected_photo_uri").apply()
             }
         }
+
+        // Show the system photo picker whenever DRVCAM opens.
+        // If the user cancels, the previously saved photo remains visible.
+        root.post {
+            photoPicker.launch(arrayOf("image/*"))
+        }
     }
 
     private fun addButton(
