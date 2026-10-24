@@ -3,6 +3,7 @@ package com.absolute.drvcam
 import android.app.AlertDialog
 import android.content.ContentValues
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -433,26 +434,39 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showTargetApps() {
-        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val apps = packageManager.queryIntentActivities(intent, 0)
-            .filter { it.activityInfo.packageName != packageName }
-            .sortedBy { it.loadLabel(packageManager).toString().lowercase() }
-
-        if (apps.isEmpty()) {
-            toast("No launchable apps found.")
+        // Lists installed apps visible to Android's package-visibility rules.
+        // For a complete list on Android 11+, add QUERY_ALL_PACKAGES to the manifest.
+        val apps = try {
+            packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
+                .filter { it.packageName != packageName }
+                .map { appInfo ->
+                    appInfo to packageManager.getApplicationLabel(appInfo).toString()
+                }
+                .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.second })
+        } catch (e: Exception) {
+            toast("Could not load installed apps.")
             return
         }
 
-        val labels = apps.map { it.loadLabel(packageManager).toString() }.toTypedArray()
+        if (apps.isEmpty()) {
+            toast("No apps found. Check app visibility in AndroidManifest.xml.")
+            return
+        }
+
+        val labels = apps.map { (appInfo, label) ->
+            // Include package name so apps with identical names can be distinguished.
+            "$label\n${appInfo.packageName}"
+        }.toTypedArray()
 
         AlertDialog.Builder(this)
-            .setTitle("Select Target App")
+            .setTitle("Select Target App (${apps.size})")
             .setItems(labels) { _, index ->
-                val app = apps[index]
-                selectedTargetPackage = app.activityInfo.packageName
-                targetButton.text = "TARGET: ${labels[index]}"
+                val appInfo = apps[index].first
+                val label = apps[index].second
+                selectedTargetPackage = appInfo.packageName
+                targetButton.text = "TARGET: $label"
                 status.text =
-                    "Selected target: ${labels[index]}. This does not replace its camera source."
+                    "Selected target: $label. Selecting an app does not replace its camera source."
             }
             .setNegativeButton("Cancel", null)
             .show()
