@@ -183,13 +183,23 @@ class MainActivity : ComponentActivity() {
         }
 
         addButton("ENABLE TARGET APP POPUP") {
+            // Save the toggle used by TargetAppAccessibilityService before opening settings.
+            getSharedPreferences("absolute_drvcam", MODE_PRIVATE)
+                .edit()
+                .putBoolean("target_popup_enabled", true)
+                .apply()
+
             if (!Settings.canDrawOverlays(this)) {
-                toast("Allow display over other apps, then tap ENABLE TARGET APP POPUP again.")
-                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:$packageName")))
+                toast("Allow display over other apps, then return and tap ENABLE TARGET APP POPUP again.")
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    )
+                )
             } else {
+                toast("Enable DRVCAM Target App Popup in Accessibility settings, then return here.")
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                toast("In Accessibility settings, enable ABSOLUTE DRVCAM Target App Popup.")
             }
         }
 
