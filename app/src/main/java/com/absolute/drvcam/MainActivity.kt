@@ -444,7 +444,8 @@ class MainActivity : ComponentActivity() {
                 }
                 .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.second })
         } catch (e: Exception) {
-            toast("Could not load installed apps.")
+            status.text = "Could not load apps. Check QUERY_ALL_PACKAGES in AndroidManifest.xml."
+            toast("Could not load installed apps. Check the manifest permission.")
             return
         }
 
