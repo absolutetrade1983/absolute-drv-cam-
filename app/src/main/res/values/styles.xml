@@ -1,10 +1,4 @@
-
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
-        <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#46DCC3</item>
-        <item name="android:navigationBarColor">#0C1319</item>
-        <item name="android:statusBarColor">#0C1319</item>
-        <item name="android:windowLightStatusBar">false</item>
-    </style>
+    <string name="accessibility_service_description">Shows a popup when a selected target app opens.</string>
 </resources>
