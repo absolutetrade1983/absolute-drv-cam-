@@ -3,6 +3,7 @@ package com.absolute.drvcam
 import android.app.AlertDialog
 import android.content.ContentValues
 import android.content.Intent
+import android.provider.MediaStore as AndroidMediaStore
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -177,7 +178,20 @@ class MainActivity : ComponentActivity() {
             else toast("Select a photo first.")
         }
 
-        targetButton = addButton("SELECT TARGET APP") {
+        addButton("PHONE CAMERA") {
+            try {
+                val cameraIntent = Intent(AndroidMediaStore.ACTION_IMAGE_CAPTURE)
+                if (cameraIntent.resolveActivity(packageManager) != null) {
+                    startActivity(cameraIntent)
+                } else {
+                    toast("No camera app found.")
+                }
+            } catch (_: Exception) {
+                toast("Could not open the phone camera.")
+            }
+        }
+
+        targetButton = addButton("TARGET APPS") {
             showTargetApps()
         }
 
@@ -209,11 +223,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Show the system photo picker whenever DRVCAM opens.
-        // If the user cancels, the previously saved photo remains visible.
-        root.post {
-            photoPicker.launch(arrayOf("image/*"))
-        }
+        // Do not launch the photo picker automatically. The user can tap SELECT PHOTO.
     }
 
     private fun addButton(
