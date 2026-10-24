@@ -28,7 +28,7 @@ class TargetAppAccessibilityService : AccessibilityService() {
         }
 
         val settings = getSharedPreferences("absolute_drvcam", MODE_PRIVATE)
-        val selectedPackage = settings.getString("selected_target_package", null)
+        val selectedPackage = settings.getString("target_package", null)
         val popupEnabled = settings.getBoolean("target_popup_enabled", true)
 
         if (!popupEnabled || selectedPackage == null ||
