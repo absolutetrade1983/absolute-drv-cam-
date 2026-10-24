@@ -2,24 +2,29 @@
 package com.absolute.drvcam
 
 import android.accessibilityservice.AccessibilityService
-import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
+import android.view.Gravity
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 
 class TargetAppAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
-    private var lastPackage = ""
+    private var windowManager: WindowManager? = null
+    private var popupView: LinearLayout? = null
     private var lastPopupTime = 0L
-    private var popup: AlertDialog? = null
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+    }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null ||
@@ -27,76 +32,74 @@ class TargetAppAccessibilityService : AccessibilityService() {
         ) return
 
         val openedPackage = event.packageName?.toString() ?: return
+        if (openedPackage == packageName) return
 
-        if (openedPackage == packageName || openedPackage == lastPackage) {
-            return
-        }
+        val prefs = getSharedPreferences("absolute_drvcam", MODE_PRIVATE)
+        val selectedPackage = prefs.getString("target_package", null)
+        val enabled = prefs.getBoolean("target_popup_enabled", false)
 
-        val settings = getSharedPreferences("absolute_drvcam", MODE_PRIVATE)
-        val selectedPackage = settings.getString("target_package", null)
-        val popupEnabled = settings.getBoolean("target_popup_enabled", false)
-
-        if (!popupEnabled || selectedPackage == null ||
-            openedPackage != selectedPackage
-        ) return
+        if (!enabled || selectedPackage.isNullOrBlank()) return
+        if (openedPackage != selectedPackage) return
+        if (popupView != null) return
 
         val now = System.currentTimeMillis()
-        if (now - lastPopupTime < 3000L) return
+        if (now - lastPopupTime < 2000L) return
 
-        lastPackage = openedPackage
         lastPopupTime = now
-
-        handler.post {
-            showPopup()
-        }
+        handler.post { showPopup() }
     }
 
     private fun showPopup() {
-        if (popup?.isShowing == true) return
+        if (popupView != null) return
 
         try {
+            val wm = windowManager
+                ?: (getSystemService(WINDOW_SERVICE) as WindowManager)
+
             val layout = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(40, 30, 40, 20)
+                setPadding(36, 28, 36, 24)
+                gravity = Gravity.CENTER
                 setBackgroundColor(Color.rgb(20, 29, 35))
+                elevation = 16f
             }
 
             val title = TextView(this).apply {
                 text = "ABSOLUTE DRVCAM"
                 textSize = 22f
                 setTextColor(Color.rgb(70, 220, 195))
-                setPadding(0, 0, 0, 12)
+                setPadding(0, 0, 0, 14)
             }
 
             val message = TextView(this).apply {
                 text = "Target app opened."
                 textSize = 16f
                 setTextColor(Color.WHITE)
-                setPadding(0, 0, 0, 18)
+                setPadding(0, 0, 0, 16)
             }
 
             val openButton = Button(this).apply {
                 text = "OPEN DRVCAM"
                 setOnClickListener {
-                    popup?.dismiss()
+                    removePopup()
+
                     val intent = Intent(
                         this@TargetAppAccessibilityService,
                         MainActivity::class.java
                     ).apply {
                         addFlags(
                             Intent.FLAG_ACTIVITY_NEW_TASK or
-                            Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                Intent.FLAG_ACTIVITY_SINGLE_TOP
                         )
                     }
+
                     startActivity(intent)
                 }
             }
 
             val closeButton = Button(this).apply {
                 text = "CLOSE"
-                setOnClickListener {
-                    popup?.dismiss()
-                }
+                setOnClickListener { removePopup() }
             }
 
             layout.addView(title)
@@ -104,34 +107,43 @@ class TargetAppAccessibilityService : AccessibilityService() {
             layout.addView(openButton)
             layout.addView(closeButton)
 
-            popup = AlertDialog.Builder(this)
-                .setView(layout)
-                .create()
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.CENTER
+            }
 
-            popup?.window?.setType(
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
-            )
-            popup?.show()
+            wm.addView(layout, params)
+            popupView = layout
 
         } catch (_: Exception) {
-            Toast.makeText(
-                applicationContext,
-                "Could not show DRVCAM popup.",
-                Toast.LENGTH_LONG
-            ).show()
+            removePopup()
+        }
+    }
+
+    private fun removePopup() {
+        val view = popupView ?: return
+        popupView = null
+
+        try {
+            windowManager?.removeView(view)
+        } catch (_: Exception) {
         }
     }
 
     override fun onInterrupt() {
         handler.removeCallbacksAndMessages(null)
-        popup?.dismiss()
-        popup = null
+        removePopup()
     }
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
-        popup?.dismiss()
-        popup = null
+        removePopup()
         super.onDestroy()
     }
 }
