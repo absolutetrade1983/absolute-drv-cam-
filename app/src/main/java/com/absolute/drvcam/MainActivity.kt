@@ -51,9 +51,18 @@ class MainActivity : ComponentActivity() {
     private var isCreating = false
 
     private val photoPicker =
-        registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             if (uri != null) {
+                try {
+                    contentResolver.takePersistableUriPermission(
+                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: Exception) {
+                    // Some document providers do not support persistable permissions.
+                }
                 selectedUri = uri
+                getSharedPreferences("absolute_drvcam", MODE_PRIVATE)
+                    .edit().putString("selected_photo_uri", uri.toString()).apply()
                 videoPreview.stopPlayback()
                 videoPreview.visibility = View.GONE
                 preview.visibility = View.VISIBLE
@@ -138,7 +147,7 @@ class MainActivity : ComponentActivity() {
         )
 
         addButton("SELECT PHOTO") {
-            photoPicker.launch("image/*")
+            photoPicker.launch(arrayOf("image/*"))
         }
 
         addButton("ROTATE") {
@@ -181,6 +190,23 @@ class MainActivity : ComponentActivity() {
         root.addView(status)
 
         setContentView(root)
+
+        // Restore the last selected photo after app restart.
+        val savedPhoto = getSharedPreferences("absolute_drvcam", MODE_PRIVATE)
+            .getString("selected_photo_uri", null)
+        if (savedPhoto != null) {
+            try {
+                selectedUri = Uri.parse(savedPhoto)
+                preview.setImageURI(selectedUri)
+                preview.visibility = View.VISIBLE
+                applyImageTransform()
+                status.text = "Photo restored. MP4 files are saved separately."
+            } catch (_: Exception) {
+                selectedUri = null
+                getSharedPreferences("absolute_drvcam", MODE_PRIVATE)
+                    .edit().remove("selected_photo_uri").apply()
+            }
+        }
     }
 
     private fun addButton(
@@ -234,15 +260,14 @@ class MainActivity : ComponentActivity() {
 
                 val savedUri = saveVideo(tempFile!!)
                 runOnUiThread {
-                    videoPreview.visibility = View.VISIBLE
-                    preview.visibility = View.GONE
-                    videoPreview.setVideoURI(savedUri)
-                    videoPreview.setOnPreparedListener { player ->
-                        player.isLooping = looping
-                        videoPreview.start()
-                    }
-                    status.text = "Saved in Movies/ABSOLUTE DRVCAM"
-                    toast("30-second MP4 created and saved.")
+                    // Keep the selected photo visible; creating an MP4 must not clear it.
+                    videoPreview.stopPlayback()
+                    videoPreview.visibility = View.GONE
+                    preview.visibility = View.VISIBLE
+                    preview.setImageURI(selectedUri ?: uri)
+                    applyImageTransform()
+                    status.text = "MP4 saved in Movies/ABSOLUTE DRVCAM. Selected photo retained."
+                    toast("30-second MP4 saved. Photo is still selected.")
                 }
             } catch (e: Exception) {
                 runOnUiThread {
