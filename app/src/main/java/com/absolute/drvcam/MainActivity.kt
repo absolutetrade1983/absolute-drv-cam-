@@ -3,7 +3,6 @@ package com.absolute.drvcam
 import android.app.AlertDialog
 import android.content.ContentValues
 import android.content.Intent
-import android.provider.MediaStore as AndroidMediaStore
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -19,6 +18,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.Settings
 import android.view.Gravity
 import android.view.Surface
 import android.view.View
@@ -178,21 +178,19 @@ class MainActivity : ComponentActivity() {
             else toast("Select a photo first.")
         }
 
-        addButton("PHONE CAMERA") {
-            try {
-                val cameraIntent = Intent(AndroidMediaStore.ACTION_IMAGE_CAPTURE)
-                if (cameraIntent.resolveActivity(packageManager) != null) {
-                    startActivity(cameraIntent)
-                } else {
-                    toast("No camera app found.")
-                }
-            } catch (_: Exception) {
-                toast("Could not open the phone camera.")
-            }
-        }
-
         targetButton = addButton("TARGET APPS") {
             showTargetApps()
+        }
+
+        addButton("ENABLE TARGET APP POPUP") {
+            if (!Settings.canDrawOverlays(this)) {
+                toast("Allow display over other apps, then tap ENABLE TARGET APP POPUP again.")
+                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")))
+            } else {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                toast("In Accessibility settings, enable ABSOLUTE DRVCAM Target App Popup.")
+            }
         }
 
         status = TextView(this).apply {
@@ -221,6 +219,17 @@ class MainActivity : ComponentActivity() {
                 getSharedPreferences("absolute_drvcam", MODE_PRIVATE)
                     .edit().remove("selected_photo_uri").apply()
             }
+        }
+
+        // Restore selected target app.
+        val savedTarget = getSharedPreferences("absolute_drvcam", MODE_PRIVATE)
+            .getString("target_package", null)
+        if (savedTarget != null) {
+            selectedTargetPackage = savedTarget
+            try {
+                val appInfo = packageManager.getApplicationInfo(savedTarget, 0)
+                targetButton.text = "TARGET: ${packageManager.getApplicationLabel(appInfo)}"
+            } catch (_: Exception) { }
         }
 
         // Do not launch the photo picker automatically. The user can tap SELECT PHOTO.
@@ -481,9 +490,10 @@ class MainActivity : ComponentActivity() {
                 val appInfo = apps[index].first
                 val label = apps[index].second
                 selectedTargetPackage = appInfo.packageName
+                getSharedPreferences("absolute_drvcam", MODE_PRIVATE)
+                    .edit().putString("target_package", appInfo.packageName).apply()
                 targetButton.text = "TARGET: $label"
-                status.text =
-                    "Selected target: $label. Selecting an app does not replace its camera source."
+                status.text = "Selected target: $label. Enable TARGET APP POPUP and the accessibility service to show a notice when it opens."
             }
             .setNegativeButton("Cancel", null)
             .show()
